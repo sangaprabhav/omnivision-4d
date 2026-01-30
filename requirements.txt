@@ -1,0 +1,45 @@
+# Web Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# Configuration
+pydantic==2.5.3
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+
+# ML/DL
+torch==2.5.0
+torchvision==0.16.0
+transformers>=5.0.0
+accelerate==0.26.1
+bitsandbytes==0.42.0
+huggingface-hub==0.20.2
+safetensors==0.4.1
+
+# Computer Vision
+opencv-python-headless==4.9.0.80
+pillow==10.2.0
+scipy==1.12.0
+numpy==1.26.3
+timm==0.9.12
+
+# SAM-2 (installed from git)
+git+https://github.com/facebookresearch/sam2.git@main
+
+# Utilities
+httpx==0.26.0
+aiofiles==23.2.1
+tenacity==8.2.3
+python-json-logger==2.0.7
+
+# Testing
+pytest==8.0.0
+pytest-asyncio==0.23.4
+httpx==0.26.0
+
+# Optional: For GCP deployment
+google-cloud-storage==2.14.0
+google-cloud-pubsub==2.19.0
