@@ -1,11 +1,20 @@
 
 import torch
 import numpy as np
-from typing import List
+from typing import List, Dict
+from dataclasses import dataclass
 from PIL import Image
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class DepthResult:
+    """Depth estimation result with uncertainty metrics"""
+    depth_maps: List[np.ndarray]  # List of depth maps in meters
+    uncertainty_maps: List[np.ndarray]  # Uncertainty/variance for each pixel
+    confidence_scores: List[float]  # Overall confidence per frame (0-1)
 
 class DepthModel:
     """Singleton wrapper for ZoeDepth (metric depth estimation)"""
@@ -57,40 +66,139 @@ class DepthModel:
             torch.cuda.empty_cache()
             logger.info("🧹 Depth model unloaded")
     
-    def estimate(self, frames: List[Image.Image]) -> List[np.ndarray]:
+    def estimate(
+        self,
+        frames: List[Image.Image],
+        compute_uncertainty: bool = True
+    ) -> DepthResult:
         """
-        Estimate metric depth for each frame
-        
+        Estimate metric depth for each frame with uncertainty quantification
+
+        Args:
+            frames: List of PIL images
+            compute_uncertainty: If True, estimate per-pixel uncertainty
+
         Returns:
-            List of depth maps (numpy arrays) in meters
+            DepthResult with depth_maps, uncertainty_maps, confidence_scores
         """
         self.load()
-        
+
         try:
             depth_maps = []
-            
+            uncertainty_maps = []
+            confidence_scores = []
+
             for i, frame in enumerate(frames):
                 result = self.pipe(frame)
                 depth = np.array(result['predicted_depth'])
-                
-                # ZoeDepth outputs metric depth in meters
+
                 # Validate range (should be 0.1m to 100m for indoor/outdoor)
-                if np.any(depth < 0) or np.any(depth > 1000):
+                valid_mask = (depth >= 0.1) & (depth <= 100.0)
+                if not np.all(valid_mask):
                     logger.warning(f"Frame {i}: Suspicious depth values detected, clipping")
                     depth = np.clip(depth, 0.1, 100.0)
-                
+
+                # Compute uncertainty (variance estimation)
+                if compute_uncertainty:
+                    uncertainty = self._estimate_uncertainty(depth, valid_mask)
+                else:
+                    uncertainty = np.zeros_like(depth)
+
+                # Compute overall confidence for this frame
+                confidence = self._compute_frame_confidence(depth, uncertainty, valid_mask)
+
                 depth_maps.append(depth)
-                
+                uncertainty_maps.append(uncertainty)
+                confidence_scores.append(confidence)
+
                 if (i + 1) % 10 == 0:
-                    logger.info(f"Processed {i+1}/{len(frames)} depth maps")
-            
-            logger.info(f"✅ Generated {len(depth_maps)} metric depth maps")
-            return depth_maps
-            
+                    logger.info(
+                        f"Processed {i+1}/{len(frames)} depth maps "
+                        f"(avg confidence: {np.mean(confidence_scores):.3f})"
+                    )
+
+            logger.info(
+                f"✅ Generated {len(depth_maps)} metric depth maps "
+                f"(mean confidence: {np.mean(confidence_scores):.3f})"
+            )
+
+            return DepthResult(
+                depth_maps=depth_maps,
+                uncertainty_maps=uncertainty_maps,
+                confidence_scores=confidence_scores
+            )
+
         except Exception as e:
             logger.error(f"Depth estimation failed: {e}")
-            # Return empty list to trigger fallback
-            return []
+            # Return empty result
+            return DepthResult(
+                depth_maps=[],
+                uncertainty_maps=[],
+                confidence_scores=[]
+            )
+
+    def _estimate_uncertainty(self, depth: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
+        """
+        Estimate per-pixel depth uncertainty
+
+        Uses local variance and edge detection to estimate confidence.
+        Higher variance at edges = lower confidence.
+        """
+        # Compute local variance using a sliding window
+        from scipy.ndimage import uniform_filter
+
+        # Local mean
+        local_mean = uniform_filter(depth, size=5)
+
+        # Local variance
+        local_var = uniform_filter(depth**2, size=5) - local_mean**2
+
+        # Edge magnitude (high gradient = low confidence)
+        grad_y, grad_x = np.gradient(depth)
+        edge_magnitude = np.sqrt(grad_x**2 + grad_y**2)
+
+        # Combine variance and edge information
+        # Normalize to [0, 1] range
+        uncertainty = local_var + 0.5 * edge_magnitude
+
+        # Normalize
+        if uncertainty.max() > 0:
+            uncertainty = uncertainty / uncertainty.max()
+
+        # Mark invalid regions with high uncertainty
+        uncertainty[~valid_mask] = 1.0
+
+        return uncertainty
+
+    def _compute_frame_confidence(
+        self,
+        depth: np.ndarray,
+        uncertainty: np.ndarray,
+        valid_mask: np.ndarray
+    ) -> float:
+        """
+        Compute overall confidence score for a depth map
+
+        Returns value in [0, 1] where 1.0 = very confident
+        """
+        # Average uncertainty (lower is better)
+        avg_uncertainty = uncertainty[valid_mask].mean() if valid_mask.sum() > 0 else 1.0
+
+        # Fraction of valid pixels
+        valid_ratio = valid_mask.sum() / valid_mask.size
+
+        # Depth range consistency (indoor scenes typically 0.5-10m)
+        depth_std = depth[valid_mask].std() if valid_mask.sum() > 0 else 100.0
+        depth_consistency = 1.0 - min(1.0, depth_std / 50.0)  # Normalize
+
+        # Combined confidence
+        confidence = (
+            0.5 * (1.0 - avg_uncertainty) +
+            0.3 * valid_ratio +
+            0.2 * depth_consistency
+        )
+
+        return float(np.clip(confidence, 0.0, 1.0))
     
     def get_depth_at_point(self, depth_map: np.ndarray, x: float, y: float) -> float:
         """
