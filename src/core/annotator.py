@@ -6,7 +6,7 @@ import tempfile
 import os
 from pathlib import Path
 
-from src.models.sam2_model import SAM2Model  # Create similar to CosmosModel
+from src.models.sam2_model import SAM2Model  
 from src.models.depth_model import DepthModel
 from src.models.cosmos_model import CosmosModel
 from src.models.fusion import fuse_4d
