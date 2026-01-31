@@ -197,15 +197,19 @@ class OmnivisionAnnotator:
                 f"(confidence: {cosmos_result.confidence_score:.3f}, parsed: {cosmos_result.parse_success})"
             )
 
-            # Step 6: 4D Fusion with Confidence Propagation
-            logger.info(f"[{job_id}] Fusing modalities into 4D trajectories...")
+            # Step 6: 4D Fusion with Phase 2 Enhancements
+            logger.info(f"[{job_id}] Fusing modalities into 4D trajectories with Phase 2 validation...")
             result = fuse_4d(
                 sam_result.video_segments,
                 depth_result.depth_maps,
                 cosmos_result.annotation,
                 indices,
                 fps,
-                self.depth
+                self.depth,
+                sam_confidences=sam_result.confidence_scores,
+                depth_confidences=depth_result.confidence_scores,
+                cosmos_confidence=cosmos_result.confidence_score,
+                enable_phase2=True  # Enable Phase 2 validation features
             )
 
             # Add Phase 1 metadata
